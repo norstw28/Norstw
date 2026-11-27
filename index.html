@@ -88,7 +88,14 @@ th,td{padding:6px 4px;border-bottom:1px solid #ddd;text-align:right}th:first-chi
   <div class="card">
     <b>วางข้อความจากแชท</b>
     <p class="muted">วางข้อความ แล้วกด “ตรวจรายการ” แอปจะยังไม่บันทึกอะไรจนกว่าคุณจะกด “ยืนยันบันทึก”</p>
-    <textarea id="pasteBox" placeholder="ตัวอย่าง&#10;07 บน 100 ล่าง 50&#10;12=30"></textarea>
+    <label>ด้านที่ต้องการวาง</label>
+    <div class="tabs" id="sideTabs">
+      <button data-side="" class="on">ตามข้อความ</button>
+      <button data-side="บน">เฉพาะบน</button>
+      <button data-side="ล่าง">เฉพาะล่าง</button>
+    </div>
+    <div class="muted" id="sideHint"></div>
+    <textarea id="pasteBox"></textarea>
     <button id="btnPasteCheck">ตรวจรายการ</button>
     <button class="sec" id="btnPasteClear">ล้างช่องข้อความ</button>
   </div>
@@ -103,7 +110,9 @@ th,td{padding:6px 4px;border-bottom:1px solid #ddd;text-align:right}th:first-chi
     <b>สำรองและนำเข้าข้อมูล</b>
     <div class="warn">ข้อมูลอยู่ในเครื่องนี้เท่านั้น ถ้าล้างข้อมูลเบราว์เซอร์ ถอนการติดตั้งแอป หรือเปลี่ยนเครื่อง ข้อมูลอาจหายทั้งหมด กรุณาสำรองข้อมูลเป็นประจำ</div>
     <button id="btnExportJson">สำรองข้อมูลทั้งหมด (ไฟล์ JSON)</button>
+    <button class="sec" id="btnExportXlsx">ส่งออก Excel ทุกวัน (ไฟล์ .xlsx)</button>
     <button class="sec" id="btnExportCsv">ส่งออกตารางดูข้อมูล (ไฟล์ CSV)</button>
+    <p class="muted">ไฟล์ .xlsx และ CSV ใช้ดูข้อมูลเท่านั้น นำกลับเข้าแอปไม่ได้ ให้ใช้ไฟล์ JSON สำหรับสำรอง แอปไม่อัปโหลดไฟล์ให้ คุณนำไฟล์ไปอัปโหลดเองภายหลัง</p>
     <label>นำเข้าข้อมูลสำรอง (ไฟล์ JSON)</label>
     <input type="file" id="fileImport" accept=".json,application/json">
     <div id="importResult"></div>
@@ -154,7 +163,7 @@ function tokenize(line){
   }
   return toks;
 }
-function parseLine(line,ctx){
+function parseLine(line,ctx,side){
   const toks=tokenize(line);
   const u=toks.find(t=>t.k==='U');
   if(toks.length&&toks[0].k==='T'&&toks.every((t,i)=>i===0||(t.k==='S'&&i===1&&toks.length===2))){
@@ -175,6 +184,13 @@ function parseLine(line,ctx){
   }
   const rest=toks.slice(1);
   if(!rest.length)return {rows:[],held:'มีแต่เลข ไม่มีประเภทและยอด'};
+  const bare=(rest.length===1&&rest[0].k==='N')?rest[0]:((rest.length===2&&rest[0].k==='S'&&rest[1].k==='N')?rest[1]:null);
+  if(side&&bare){
+    if(ctx&&ctx!==side)return {rows:[],held:'หัวข้อ "'+ctx+'" ขัดกับด้านที่เลือก ('+side+')'};
+    const a0=validAmountStr(bare.v);
+    if(a0===null)return {rows:[],held:'ยอด "'+bare.v+'" ไม่ถูกต้อง (ต้องมากกว่า 0)'};
+    return {rows:[{number:n0.v,type:side,amount:a0}],held:null};
+  }
   const rows=[];let i=0;
   while(i<rest.length){
     const t=rest[i];
@@ -198,15 +214,16 @@ function parseLine(line,ctx){
       return {rows:[],held:'รูปแบบไม่ถูกต้อง'};
     }
   }
+  if(side&&rows.some(r=>r.type!==side))return {rows:[],held:'ด้านในบรรทัดขัดกับด้านที่เลือก ('+side+') ไม่ย้ายยอดให้เอง'};
   return {rows,held:null};
 }
-function parseText(text){
+function parseText(text,side){
   const lines=normalizeText(text).split(/\r?\n/);
   const rows=[],held=[];let ctx=null;
   lines.forEach((raw,idx)=>{
     const line=raw.trim();
     if(!line)return;
-    const r=parseLine(line,ctx);
+    const r=parseLine(line,ctx,side||null);
     if(r.ctx){ctx=r.ctx;return}
     if(r.held){held.push({raw:line,line:idx+1,reason:r.held});return}
     r.rows.forEach(x=>rows.push({...x,raw:line,line:idx+1}));
@@ -278,6 +295,71 @@ function planImport(curSlips,curEntries,b){
   const newEntries=b.entries.filter(e=>newIds.has(e.slip_id)&&!eid.has(e.entry_id));
   return {newSlips,newEntries,skipped:b.slips.length-newSlips.length};
 }
+const CRC_T=(()=>{const t=[];for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t.push(c>>>0)}return t})();
+function crc32(u){let c=0xFFFFFFFF;for(let i=0;i<u.length;i++)c=CRC_T[(c^u[i])&255]^(c>>>8);return (c^0xFFFFFFFF)>>>0}
+function zipStore(files){
+  const enc=new TextEncoder(),parts=[],cd=[];let off=0;
+  files.forEach(f=>{
+    const nm=enc.encode(f.name),d=f.data,crc=crc32(d);
+    const lh=new DataView(new ArrayBuffer(30));
+    lh.setUint32(0,0x04034b50,true);lh.setUint16(4,20,true);lh.setUint16(6,0x0800,true);lh.setUint16(8,0,true);
+    lh.setUint16(10,0,true);lh.setUint16(12,0x21,true);lh.setUint32(14,crc,true);lh.setUint32(18,d.length,true);lh.setUint32(22,d.length,true);
+    lh.setUint16(26,nm.length,true);lh.setUint16(28,0,true);
+    parts.push(new Uint8Array(lh.buffer),nm,d);
+    const ch=new DataView(new ArrayBuffer(46));
+    ch.setUint32(0,0x02014b50,true);ch.setUint16(4,20,true);ch.setUint16(6,20,true);ch.setUint16(8,0x0800,true);ch.setUint16(10,0,true);
+    ch.setUint16(12,0,true);ch.setUint16(14,0x21,true);ch.setUint32(16,crc,true);ch.setUint32(20,d.length,true);ch.setUint32(24,d.length,true);
+    ch.setUint16(28,nm.length,true);ch.setUint32(42,off,true);
+    cd.push(new Uint8Array(ch.buffer),nm);
+    off+=30+nm.length+d.length;
+  });
+  let cdLen=0;cd.forEach(p=>cdLen+=p.length);
+  const ed=new DataView(new ArrayBuffer(22));
+  ed.setUint32(0,0x06054b50,true);ed.setUint16(8,files.length,true);ed.setUint16(10,files.length,true);ed.setUint32(12,cdLen,true);ed.setUint32(16,off,true);
+  const all=parts.concat(cd,[new Uint8Array(ed.buffer)]);
+  let n=0;all.forEach(p=>n+=p.length);
+  const out=new Uint8Array(n);let o=0;all.forEach(p=>{out.set(p,o);o+=p.length});
+  return out;
+}
+function xesc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g,'')}
+function sheetXml(rows){
+  let x='<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>';
+  rows.forEach((r,ri)=>{
+    x+='<row r="'+(ri+1)+'">';
+    r.forEach((v,ci)=>{
+      const ref=String.fromCharCode(65+ci)+(ri+1);
+      if(v===null||v===undefined||v==='')return;
+      if(typeof v==='number')x+='<c r="'+ref+'"><v>'+v+'</v></c>';
+      else x+='<c r="'+ref+'" t="inlineStr"><is><t xml:space="preserve">'+xesc(v)+'</t></is></c>';
+    });
+    x+='</row>';
+  });
+  return x+'</sheetData></worksheet>';
+}
+function buildXlsx(slips,entries){
+  const by={};slips.forEach(s=>by[s.slip_id]=s);
+  const ok=entries.filter(e=>by[e.slip_id]&&by[e.slip_id].status==='ยืนยันแล้ว');
+  const sorted=ok.slice().sort((a,b)=>by[a.slip_id].date.localeCompare(by[b.slip_id].date)||a.number.localeCompare(b.number)||(a.type===b.type?0:(a.type==='บน'?-1:1)));
+  const r1=[['วันที่','ชื่อ','ที่อยู่','เลข','ประเภท','ยอด','ส่งเงิน','หมายเหตุ']];
+  sorted.forEach(e=>{const s=by[e.slip_id];r1.push([thaiDateText(s.date),s.name,s.address,String(e.number),e.type,e.amount,s.send_money,s.note])});
+  const g={};
+  sorted.forEach(e=>{const s=by[e.slip_id];const d=g[s.date]=g[s.date]||{top:0,bot:0,nums:new Set(),slips:new Set()};
+    if(e.type==='บน')d.top=addMoney(d.top,e.amount);else d.bot=addMoney(d.bot,e.amount);d.nums.add(e.number);d.slips.add(e.slip_id)});
+  const r2=[['วันที่','รวมบน','รวมล่าง','รวมทั้งหมด','จำนวนเลข','จำนวนโพย']];
+  let tt=0,tb=0,tn=0,ts=0;
+  Object.keys(g).sort().forEach(k=>{const d=g[k];r2.push([thaiDateText(k),d.top,d.bot,addMoney(d.top,d.bot),d.nums.size,d.slips.size]);tt=addMoney(tt,d.top);tb=addMoney(tb,d.bot);tn+=d.nums.size;ts+=d.slips.size});
+  r2.push(['รวมทุกวัน',tt,tb,addMoney(tt,tb),tn,ts]);
+  const enc=new TextEncoder(),X='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
+  const files=[
+    ['[Content_Types].xml',X+'<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>'],
+    ['_rels/.rels',X+'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'],
+    ['xl/workbook.xml',X+'<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="รายการ" sheetId="1" r:id="rId1"/><sheet name="สรุป" sheetId="2" r:id="rId2"/></sheets></workbook>'],
+    ['xl/_rels/workbook.xml.rels',X+'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/></Relationships>'],
+    ['xl/worksheets/sheet1.xml',sheetXml(r1)],
+    ['xl/worksheets/sheet2.xml',sheetXml(r2)]
+  ];
+  return zipStore(files.map(f=>({name:f[0],data:enc.encode(f[1])})));
+}
 // ==END CORE==
 
 let DB=null;
@@ -305,7 +387,7 @@ function writeTx(ops){
 function uid(){return (crypto.randomUUID?crypto.randomUUID():String(Date.now())+Math.random().toString(16).slice(2))}
 
 const $=id=>document.getElementById(id);
-let view='fill',range=0,grid={top:{},bot:{}},review=null;
+let view='fill',range=0,grid={top:{},bot:{}},review=null,pasteSide='';
 const RANGES=[[0,33],[34,67],[68,99]];
 
 function setView(v){
@@ -316,6 +398,7 @@ function setView(v){
   $('totalsBar').classList.toggle('hide',v!=='fill');
   if(v==='review')renderReview();
   if(v==='history')renderHistory();
+  checkBackup();
   window.scrollTo(0,0);
 }
 document.querySelectorAll('#nav button').forEach(b=>b.onclick=()=>setView(b.dataset.v));
@@ -389,19 +472,27 @@ $('btnGridCheck').onclick=()=>{
 };
 $('btnGridClear').onclick=()=>{if(confirm('ล้างยอดที่กรอกในตารางทั้งหมด?')){grid={top:{},bot:{}};renderGrid()}};
 
+function updSide(){
+  $('sideTabs').querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.side===pasteSide));
+  $('sideHint').textContent=pasteSide
+    ?'โหมดเฉพาะ'+pasteSide+': วางเป็น เลข 2 ตัว + ยอด เช่น 12 50 → เลข 12 '+pasteSide+' 50 บาท อีกด้านไม่สร้างรายการ'
+    :'โหมดตามข้อความ: ต้องมีคำว่า บน/ล่าง ในบรรทัด หรือมีหัวข้อ บน/ล่าง ก่อนรายการ';
+  $('pasteBox').placeholder=pasteSide?'ตัวอย่าง&#10;10 10&#10;11 40&#10;12 50'.replace(/&#10;/g,'\n'):'ตัวอย่าง\n07 บน 100 ล่าง 50\n12=30';
+}
+$('sideTabs').querySelectorAll('button').forEach(b=>b.onclick=()=>{pasteSide=b.dataset.side;updSide()});
 $('btnPasteCheck').onclick=()=>{
   const t=$('pasteBox').value;
   if(!t.trim()){toast('ยังไม่ได้วางข้อความ',true);return}
-  const p=parseText(t);
+  const p=parseText(t,pasteSide||null);
   if(!p.rows.length&&!p.held.length){toast('ไม่พบรายการในข้อความ',true);return}
-  startReview(p.rows,p.held.map(h=>({raw:h.raw,reason:h.reason})),'วางข้อความ');
+  startReview(p.rows,p.held.map(h=>({raw:h.raw,reason:h.reason})),'วางข้อความ'+(pasteSide?' (เฉพาะ'+pasteSide+')':''),pasteSide||null);
 };
 $('btnPasteClear').onclick=()=>{$('pasteBox').value=''};
 
 let rid=0;
-async function startReview(rows,held,source){
+async function startReview(rows,held,source,side){
   const header=getHeader();
-  review={header,source,rows:rows.map(r=>({...r,id:++rid})),held:held.map(h=>({...h,id:++rid})),slips:await getAll('slips'),entries:await getAll('entries')};
+  review={header,source,side:side||null,rows:rows.map(r=>({...r,id:++rid})),held:held.map(h=>({...h,id:++rid})),slips:await getAll('slips'),entries:await getAll('entries')};
   setView('review');
 }
 function rowError(r){
@@ -466,7 +557,7 @@ function renderReview(){
   box.querySelectorAll('[data-delheld]').forEach(b=>b.onclick=()=>{R.held=R.held.filter(x=>x.id!=b.dataset.delheld);renderReview()});
   box.querySelectorAll('[data-recheck]').forEach(b=>b.onclick=()=>{
     const id=b.dataset.recheck,inp=box.querySelector('[data-hid="'+id+'"]');
-    const p=parseText(inp.value);
+    const p=parseText(inp.value,R.side);
     if(p.held.length){const x=R.held.find(y=>y.id==id);x.raw=inp.value.trim();x.reason=p.held[0].reason;renderReview();toast('บรรทัดนี้ยังอ่านไม่ได้',true);return}
     if(!p.rows.length){toast('ไม่พบรายการในบรรทัดนี้ (ถ้าเป็นหัว “บน/ล่าง” เดี่ยว ๆ ไม่มีประเภทให้ใช้ต่อ)',true);return}
     R.held=R.held.filter(y=>y.id!=id);p.rows.forEach(x=>R.rows.push({...x,id:++rid}));renderReview();
@@ -514,72 +605,96 @@ async function renderHistory(){
   slips.forEach(s=>{
     const es=entries.filter(e=>e.slip_id===s.slip_id).sort((a,b)=>a.number.localeCompare(b.number)||(a.type==='บน'?-1:1));
     const t=totalsOf(es);
-    h+=`<div class="card"><b>${esc(thaiDateText(s.date))}</b> <span class="tag ${s.status==='ยืนยันแล้ว'?'t':'w'}">${s.status}</span>
+    h+=`<div class="card"><b>${esc(thaiDateText(s.date))}</b> <span class="tag ${s.status==='ยืนยันแล้ว'?'t':'w'}">${esc(s.status)}</span>
     <div>ชื่อ: ${esc(s.name||'-')} · ที่อยู่: ${esc(s.address||'-')}<br>ส่งเงิน: ${esc(s.send_money||'-')} · หมายเหตุ: ${esc(s.note||'-')}</div>
     <div>บน <b>${fmtMoney(t.top)||0}</b> · ล่าง <b>${fmtMoney(t.bot)||0}</b> · ${t.count} เลข</div>
-    <button class="sec small" data-tg="${s.slip_id}" style="margin-top:8px">ดู/ซ่อนรายละเอียด</button>
-    <div class="hide" id="d-${s.slip_id}"><table><tr><th>เลข</th><th>ประเภท</th><th>ยอด</th></tr>${es.map(e=>`<tr><td><b>${e.number}</b></td><td><span class="tag ${e.type==='บน'?'t':'b'}">${e.type}</span></td><td>${fmtMoney(e.amount)}</td></tr>`).join('')}</table>
-    ${s.status==='ยืนยันแล้ว'?`<button class="red small" data-cancel="${s.slip_id}" style="margin-top:8px">ยกเลิกโพยนี้</button>`:''}</div></div>`;
+    <details><summary>ดูรายการ (${es.length})</summary><table><tr><th>เลข</th><th>ประเภท</th><th>ยอด</th></tr>`+
+    es.map(e=>`<tr><td><b>${esc(e.number)}</b></td><td><span class="tag ${e.type==='บน'?'t':'b'}">${esc(e.type)}</span></td><td>${fmtMoney(e.amount)}</td></tr>`).join('')+
+    `</table></details>
+    <button class="sec" data-tg="${esc(s.slip_id)}">${s.status==='ยกเลิก'?'กู้คืนโพยนี้':'ยกเลิกโพยนี้'}</button></div>`;
   });
-  $('v-history').innerHTML=h;
-  $('v-history').querySelectorAll('[data-tg]').forEach(b=>b.onclick=()=>$('d-'+b.dataset.tg).classList.toggle('hide'));
-  $('v-history').querySelectorAll('[data-cancel]').forEach(b=>b.onclick=async()=>{
-    if(!confirm('ยกเลิกโพยนี้? (ข้อมูลยังเก็บไว้ แต่ไม่นับและไม่ส่งออก)'))return;
-    const s=slips.find(x=>x.slip_id===b.dataset.cancel);
-    await writeTx(ss=>ss.put({...s,status:'ยกเลิก'}));toast('ยกเลิกโพยแล้ว');renderHistory();
+  const box=$('v-history');box.innerHTML=h;
+  box.querySelectorAll('[data-tg]').forEach(b=>b.onclick=async()=>{
+    const s=slips.find(x=>x.slip_id===b.dataset.tg);if(!s)return;
+    const toCancel=s.status!=='ยกเลิก';
+    if(!confirm(toCancel?'ยกเลิกโพยนี้? ข้อมูลยังอยู่ในเครื่อง แต่จะไม่รวมในไฟล์ส่งออก':'กู้คืนโพยนี้?'))return;
+    try{await writeTx(ss=>{ss.put({...s,status:toCancel?'ยกเลิก':'ยืนยันแล้ว'})});toast(toCancel?'ยกเลิกโพยแล้ว':'กู้คืนโพยแล้ว');renderHistory()}
+    catch(e){toast('ทำรายการไม่สำเร็จ: '+e.message,true)}
   });
 }
 
-async function download(name,text,mime){
-  const cap=window.Capacitor;
-  if(cap&&cap.isNativePlatform&&cap.isNativePlatform()){
-    try{
-      const FS=cap.Plugins.Filesystem,SH=cap.Plugins.Share;
-      const r=await FS.writeFile({path:name,data:text,directory:'CACHE',encoding:'utf8'});
-      await SH.share({title:name,url:r.uri,dialogTitle:'เลือกที่เก็บไฟล์ (เช่น Drive หรือไฟล์ในเครื่อง)'});
-      return true;
-    }catch(e){toast('ส่งออกไม่สำเร็จ: '+(e&&e.message||e),true);return false}
+function stamp(){const d=new Date(),p=n=>String(n).padStart(2,'0');return d.getFullYear()+p(d.getMonth()+1)+p(d.getDate())+'-'+p(d.getHours())+p(d.getMinutes())}
+function u8ToB64(u){let s='';for(let i=0;i<u.length;i+=0x8000)s+=String.fromCharCode.apply(null,u.subarray(i,i+0x8000));return btoa(s)}
+async function saveFile(name,mime,data){
+  const u=typeof data==='string'?new TextEncoder().encode(data):data;
+  const cap=window.Capacitor,PL=cap&&cap.Plugins,FS=PL&&PL.Filesystem;
+  if(cap&&cap.isNativePlatform&&cap.isNativePlatform()&&FS){
+    const b64=u8ToB64(u);
+    try{await FS.writeFile({path:'poy/'+name,data:b64,directory:'DOCUMENTS',recursive:true});return {where:'Documents/poy/'+name}}catch(e1){}
+    const r=await FS.writeFile({path:name,data:b64,directory:'CACHE'});
+    if(PL.Share){
+      try{await PL.Share.share({title:name,files:[r.uri],dialogTitle:'เลือกที่เก็บไฟล์'});return {where:'ส่งต่อให้แอปที่คุณเลือก'}}
+      catch(e2){if(/cancel/i.test(String(e2&&e2.message)))return {where:'ยกเลิกการแชร์ (ไฟล์ยังไม่ถูกเก็บ)'};throw e2}
+    }
+    throw new Error('บันทึกไฟล์ลงเครื่องไม่ได้');
   }
-  const b=new Blob([text],{type:mime}),a=document.createElement('a');
-  a.href=URL.createObjectURL(b);a.download=name;document.body.appendChild(a);a.click();
-  setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},2000);
-  return true;
+  const url=URL.createObjectURL(new Blob([u],{type:mime}));
+  const a=document.createElement('a');a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),4000);
+  return {where:'โฟลเดอร์ดาวน์โหลดของเบราว์เซอร์'};
 }
-function stamp(){const d=new Date();return d.getFullYear()+String(d.getMonth()+1).padStart(2,'0')+String(d.getDate()).padStart(2,'0')+'-'+String(d.getHours()).padStart(2,'0')+String(d.getMinutes()).padStart(2,'0')}
-$('btnExportJson').onclick=async()=>{
-  const ok=await download('poy-backup-'+stamp()+'.json',buildBackup(await getAll('slips'),await getAll('entries')),'application/json');
-  if(ok){localStorage.setItem('lastBackup',String(Date.now()));updBanner();toast('สร้างไฟล์สำรองแล้ว เก็บไฟล์ไว้นอกโทรศัพท์ด้วย')}
-};
-$('btnExportCsv').onclick=async()=>{
-  const ok=await download('poy-'+stamp()+'.csv',buildCsv(await getAll('slips'),await getAll('entries')),'text/csv;charset=utf-8');
-  if(ok)toast('ส่งออก CSV แล้ว (ใช้ดูข้อมูล ถ้าจะกู้คืนให้ใช้ไฟล์ JSON)');
-};
-$('fileImport').onchange=async ev=>{
-  const f=ev.target.files[0];if(!f)return;
-  const out=$('importResult');
-  try{
-    const b=parseBackup(await f.text());
-    if(b.error){out.innerHTML='<div class="err">'+esc(b.error)+'</div>';return}
-    const plan=planImport(await getAll('slips'),await getAll('entries'),b);
-    if(!confirm('นำเข้าโพยใหม่ '+plan.newSlips.length+' โพย ('+plan.newEntries.length+' รายการ)\nข้ามโพยที่มีอยู่แล้ว '+plan.skipped+' โพย\nยืนยันนำเข้า?'))return;
-    await writeTx((ss,es)=>{plan.newSlips.forEach(s=>ss.put(s));plan.newEntries.forEach(e=>es.put(e))});
-    out.innerHTML='<div class="ok">นำเข้าสำเร็จ: เพิ่ม '+plan.newSlips.length+' โพย, '+plan.newEntries.length+' รายการ, ข้าม '+plan.skipped+' โพยที่มีอยู่แล้ว</div>';
-  }catch(e){out.innerHTML='<div class="err">นำเข้าไม่สำเร็จ: '+esc(e.message)+' (ข้อมูลเดิมไม่ถูกแก้)</div>'}
-  ev.target.value='';
-};
-function updBanner(){
-  const t=+localStorage.getItem('lastBackup')||0,b=$('backupBanner');
-  const days=(Date.now()-t)/864e5;
-  if(!t){b.textContent='ยังไม่เคยสำรองข้อมูล ข้อมูลอยู่ในเครื่องนี้เท่านั้น ไปที่แท็บ “สำรอง” แล้วกด “สำรองข้อมูลทั้งหมด”';b.classList.remove('hide')}
-  else if(days>7){b.textContent='สำรองล่าสุดเมื่อ '+Math.floor(days)+' วันก่อน ควรสำรองข้อมูลใหม่';b.classList.remove('hide')}
+async function checkBackup(){
+  if(!DB)return;
+  const b=$('backupBanner'),n=(await getAll('entries')).length;
+  const last=localStorage.getItem('poy_last_backup');
+  const old=!last||(Date.now()-new Date(last).getTime())>7*864e5;
+  if(n&&old){b.textContent='⚠️ ยังไม่ได้สำรองข้อมูลใน 7 วัน ไปที่แท็บ “สำรอง” แล้วกด “สำรองข้อมูลทั้งหมด”';b.classList.remove('hide')}
   else b.classList.add('hide');
 }
+$('btnExportJson').onclick=async()=>{
+  try{
+    const slips=await getAll('slips'),entries=await getAll('entries');
+    const r=await saveFile('poy-backup-'+stamp()+'.json','application/json',buildBackup(slips,entries));
+    localStorage.setItem('poy_last_backup',new Date().toISOString());checkBackup();
+    toast('✅ สำรองแล้ว: '+r.where);
+  }catch(e){toast('สำรองไม่สำเร็จ: '+e.message,true)}
+};
+$('btnExportCsv').onclick=async()=>{
+  try{
+    const slips=await getAll('slips'),entries=await getAll('entries');
+    const r=await saveFile('poy-table-'+stamp()+'.csv','text/csv',buildCsv(slips,entries));
+    toast('✅ ส่งออก CSV แล้ว: '+r.where);
+  }catch(e){toast('ส่งออกไม่สำเร็จ: '+e.message,true)}
+};
+$('btnExportXlsx').onclick=async()=>{
+  try{
+    if(review&&review.held.length&&!confirm('ยังมีบรรทัดรอตรวจที่ยังไม่ได้บันทึก ไฟล์นี้จะไม่รวมรายการเหล่านั้น ส่งออกต่อหรือไม่?'))return;
+    const slips=await getAll('slips'),entries=await getAll('entries');
+    const by={};slips.forEach(s=>by[s.slip_id]=s);
+    if(!entries.some(e=>by[e.slip_id]&&by[e.slip_id].status==='ยืนยันแล้ว')){toast('ยังไม่มีรายการที่ยืนยันบันทึกให���ส่งออก',true);return}
+    const r=await saveFile('poy-all-'+stamp()+'.xlsx','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',buildXlsx(slips,entries));
+    toast('✅ ส่งออก Excel แล้ว: '+r.where);
+  }catch(e){toast('ส่งออกไม่สำเร็จ: '+e.message,true)}
+};
+$('fileImport').onchange=async ev=>{
+  const f=ev.target.files[0];if(!f)return;const box=$('importResult');
+  try{
+    const b=parseBackup(await f.text());
+    if(b.error){box.innerHTML='<div class="err">'+esc(b.error)+'</div>';return}
+    const slips=await getAll('slips'),entries=await getAll('entries');
+    const p=planImport(slips,entries,b);
+    await writeTx((ss,es)=>{p.newSlips.forEach(s=>ss.put(s));p.newEntries.forEach(e=>es.put(e))});
+    box.innerHTML='<div class="ok">นำเข้าโพยใหม่ '+p.newSlips.length+' · รายการ '+p.newEntries.length+' · ข้ามที่มีอยู่แล้ว '+p.skipped+'</div>';
+    checkBackup();
+  }catch(e){box.innerHTML='<div class="err">นำเข้าไม่สำเร็จ: '+esc(e.message)+'</div>'}
+  ev.target.value='';
+};
 
-(async function(){
-  initDate();renderGrid();updBanner();
-  try{await openDb();if(navigator.storage&&navigator.storage.persist)navigator.storage.persist()}
-  catch(e){toast('เปิดฐานข้อมูลในเครื่องไม่ได้: '+e.message,true)}
-  if('serviceWorker' in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('sw.js').catch(()=>{});
+(async function init(){
+  updSide();
+  try{await openDb()}catch(e){toast('เปิดฐานข้อมูลในเครื่องไม่ได้: '+e.message,true);return}
+  initDate();renderGrid();checkBackup();
+  if('serviceWorker' in navigator&&location.protocol.indexOf('http')===0)navigator.serviceWorker.register('sw.js').catch(()=>{});
 })();
 </script>
 </body>
