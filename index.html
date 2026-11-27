@@ -256,7 +256,7 @@
           </button>
           <button type="button" class="export-row xlsx" id="btnExportXlsx">
             <span class="ex-ic" aria-hidden="true">📊</span>
-            <span class="ex-txt"><b>ส่งออก Excel (.xlsx)</b><small>เปิดใน Excel หรือ Sheets</small></span>
+            <span class="ex-txt"><b>ส่งออก Excel ตามหน้าโพย</b><small>1 โพย = 1 แผ่น เหมือนต้นฉบับ</small></span>
             <span class="ex-arrow" aria-hidden="true">⬇</span>
           </button>
           <button type="button" class="export-row csv" id="btnExportCsv">
@@ -507,44 +507,137 @@ function zipStore(files){
   const out=new Uint8Array(n);let o=0;all.forEach(p=>{out.set(p,o);o+=p.length});
   return out;
 }
+const XH='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
+const XM='http://schemas.openxmlformats.org/spreadsheetml/2006/main';
 function xesc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g,'')}
-function sheetXml(rows){
-  let x='<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>';
+function colName(i){return String.fromCharCode(65+i)}
+function cellXml(ref,spec){
+  let v=spec,s=0;
+  if(spec!==null&&typeof spec==='object'){v=spec.v;s=spec.s||0}
+  const st=s?' s="'+s+'"':'';
+  if(v===null||v===undefined||v==='')return s?'<c r="'+ref+'"'+st+'/>':'';
+  if(typeof v==='number')return '<c r="'+ref+'"'+st+'><v>'+v+'</v></c>';
+  return '<c r="'+ref+'"'+st+' t="inlineStr"><is><t xml:space="preserve">'+xesc(v)+'</t></is></c>';
+}
+function sheetXml(rows,opt){
+  opt=opt||{};
+  let x=XH+'<worksheet xmlns="'+XM+'">';
+  if(opt.fit)x+='<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>';
+  x+='<sheetViews><sheetView workbookViewId="0"'+(opt.first?' tabSelected="1"':'')+'/></sheetViews><sheetFormatPr defaultRowHeight="16"/>';
+  if(opt.cols)x+='<cols>'+opt.cols.map((w,i)=>'<col min="'+(i+1)+'" max="'+(i+1)+'" width="'+w+'" customWidth="1"/>').join('')+'</cols>';
+  x+='<sheetData>';
   rows.forEach((r,ri)=>{
     x+='<row r="'+(ri+1)+'">';
-    r.forEach((v,ci)=>{
-      const ref=String.fromCharCode(65+ci)+(ri+1);
-      if(v===null||v===undefined||v==='')return;
-      if(typeof v==='number')x+='<c r="'+ref+'"><v>'+v+'</v></c>';
-      else x+='<c r="'+ref+'" t="inlineStr"><is><t xml:space="preserve">'+xesc(v)+'</t></is></c>';
-    });
+    r.forEach((v,ci)=>{x+=cellXml(colName(ci)+(ri+1),v)});
     x+='</row>';
   });
-  return x+'</sheetData></worksheet>';
+  x+='</sheetData>';
+  if(opt.merges&&opt.merges.length)x+='<mergeCells count="'+opt.merges.length+'">'+opt.merges.map(m=>'<mergeCell ref="'+m+'"/>').join('')+'</mergeCells>';
+  x+='<pageMargins left="0.4" right="0.4" top="0.5" bottom="0.5" header="0.3" footer="0.3"/>';
+  if(opt.fit)x+='<pageSetup paperSize="9" orientation="portrait" fitToWidth="1" fitToHeight="0"/>';
+  return x+'</worksheet>';
+}
+function xfXml(font,fill,border,fmt,al){
+  return '<xf numFmtId="'+fmt+'" fontId="'+font+'" fillId="'+fill+'" borderId="'+border+'" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1"'+(al?' applyAlignment="1"><alignment '+al+'/></xf>':'/>');
+}
+function stylesXml(){
+  const bd='<color rgb="FF7F7F7F"/>';
+  const xfs=[
+    xfXml(0,0,0,0,''),
+    xfXml(0,0,0,0,'horizontal="right" vertical="center"'),
+    xfXml(0,0,2,0,'horizontal="center" vertical="center" shrinkToFit="1"'),
+    xfXml(3,0,0,0,'horizontal="right" vertical="center"'),
+    xfXml(2,2,3,0,'horizontal="left" vertical="center"'),
+    xfXml(1,2,3,0,'horizontal="right" vertical="center"'),
+    xfXml(1,2,3,164,'horizontal="right" vertical="center"'),
+    xfXml(1,0,1,0,'horizontal="center" vertical="center"'),
+    xfXml(0,0,1,0,'horizontal="right" vertical="center"'),
+    xfXml(0,3,1,0,''),
+    xfXml(2,0,0,0,'horizontal="left" vertical="center"'),
+    xfXml(1,2,1,0,'horizontal="center" vertical="center"'),
+    xfXml(1,0,1,0,'horizontal="center" vertical="center"'),
+    xfXml(0,0,1,0,'horizontal="right" vertical="center"'),
+    xfXml(1,2,1,0,'horizontal="left" vertical="center"'),
+    xfXml(1,2,3,165,'horizontal="right" vertical="center"')
+  ];
+  return XH+'<styleSheet xmlns="'+XM+'">'
+    +'<numFmts count="2"><numFmt numFmtId="164" formatCode="#,##0&quot; ตัว&quot;"/><numFmt numFmtId="165" formatCode="#,##0.00&quot; ตัว&quot;"/></numFmts>'
+    +'<fonts count="4"><font><sz val="11"/><name val="Tahoma"/></font><font><b/><sz val="11"/><name val="Tahoma"/></font><font><b/><sz val="12"/><name val="Tahoma"/></font><font><i/><sz val="9"/><color rgb="FFC00000"/><name val="Tahoma"/></font></fonts>'
+    +'<fills count="4"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFDCE6F1"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFD9D9D9"/><bgColor indexed="64"/></patternFill></fill></fills>'
+    +'<borders count="4"><border><left/><right/><top/><bottom/><diagonal/></border>'
+    +'<border><left style="thin">'+bd+'</left><right style="thin">'+bd+'</right><top style="thin">'+bd+'</top><bottom style="thin">'+bd+'</bottom><diagonal/></border>'
+    +'<border><left/><right/><top/><bottom style="dotted"><color rgb="FF404040"/></bottom><diagonal/></border>'
+    +'<border><left/><right/><top style="thin">'+bd+'</top><bottom style="medium"><color rgb="FF000000"/></bottom><diagonal/></border></borders>'
+    +'<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
+    +'<cellXfs count="'+xfs.length+'">'+xfs.join('')+'</cellXfs>'
+    +'<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
+}
+const SLIP_COLS=[7,11,7,11,7,11,1.5,7,11,7,11,7,11];
+const SLIP_NOTE='หมายเหตุ: ส่งเกิน ส่วนเกินไม่จ่าย';
+function slipRows(s,ents){
+  const m={top:{},bot:{}};
+  ents.forEach(e=>{(e.type==='บน'?m.top:m.bot)[e.number]=e.amount});
+  const R=[];
+  const set=(r,c,v)=>{(R[r-1]=R[r-1]||[])[c-1]=v};
+  const d=/^(\d{4})-(\d{2})-(\d{2})$/.exec(s.date)||['',0,1,1];
+  set(1,1,{v:'วันที่',s:1});set(1,2,{v:+d[3],s:2});set(1,3,{v:'เดือน',s:1});set(1,4,{v:THAI_MONTHS[+d[2]-1]||'',s:2});set(1,5,{v:'พ.ศ.',s:1});set(1,6,{v:+d[1]+543,s:2});
+  set(1,8,{v:'ชื่อ',s:1});set(1,9,{v:s.name||'',s:2});set(1,10,{v:'ที่อยู่',s:1});set(1,11,{v:s.address||'',s:2});set(1,12,{v:'ส่งเงิน',s:1});set(1,13,{v:s.send_money||'',s:2});
+  set(2,8,{v:s.note?'หมายเหตุ: '+s.note:SLIP_NOTE,s:3});
+  [[1,'บน',m.top],[8,'ล่าง',m.bot]].forEach(([c0,label,mm])=>{
+    const sum=Object.keys(mm).reduce((a,k)=>addMoney(a,mm[k]),0);
+    set(3,c0,{v:label,s:4});set(3,c0+1,{s:4});set(3,c0+2,{s:4});set(3,c0+3,{s:4});
+    set(3,c0+4,{v:'รวม',s:5});set(3,c0+5,{v:sum,s:Number.isInteger(sum)?6:15});
+    for(let i=0;i<34;i++){
+      [0,34,68].forEach((start,b)=>{
+        const n=start+i,nc=c0+b*2,ac=nc+1;
+        if(n<=99){const k=numberLabel(n);set(4+i,nc,{v:k,s:7});set(4+i,ac,{v:k in mm?mm[k]:null,s:8})}
+        else{set(4+i,nc,{s:9});set(4+i,ac,{s:9})}
+      });
+    }
+    set(40,c0,{v:'สรุปรายการ'+label,s:10});
+    set(41,c0,{v:'เลข',s:11});set(41,c0+1,{v:'ยอด',s:11});
+    Object.keys(mm).sort().forEach((k,i)=>{set(42+i,c0,{v:k,s:12});set(42+i,c0+1,{v:mm[k],s:13})});
+  });
+  return R;
+}
+function sheetNameFor(s,used){
+  const d=/^(\d{4})-(\d{2})-(\d{2})$/.exec(s.date)||['',0,0,0];
+  let base=(+d[3])+'-'+(+d[2])+'-'+(+d[1]+543)+(s.name?' '+s.name:'');
+  base=base.replace(/[\[\]:*?\/\\]/g,'-').replace(/^'+|'+$/g,'').trim().slice(0,31)||'โพย';
+  let nm=base,k=2;
+  while(used.has(nm.toLowerCase())){const suf=' ('+k+')';nm=base.slice(0,31-suf.length)+suf;k++}
+  used.add(nm.toLowerCase());
+  return nm;
 }
 function buildXlsx(slips,entries){
   const by={};slips.forEach(s=>by[s.slip_id]=s);
+  const okSlips=slips.filter(s=>s.status==='ยืนยันแล้ว').sort((a,b)=>a.date.localeCompare(b.date)||String(a.created_at).localeCompare(String(b.created_at)));
+  const used=new Set(),sheets=[];
+  okSlips.forEach((s,i)=>{
+    sheets.push({name:sheetNameFor(s,used),xml:sheetXml(slipRows(s,entries.filter(e=>e.slip_id===s.slip_id)),{cols:SLIP_COLS,merges:['H2:M2'],fit:true,first:i===0})});
+  });
   const ok=entries.filter(e=>by[e.slip_id]&&by[e.slip_id].status==='ยืนยันแล้ว');
   const sorted=ok.slice().sort((a,b)=>by[a.slip_id].date.localeCompare(by[b.slip_id].date)||a.number.localeCompare(b.number)||(a.type===b.type?0:(a.type==='บน'?-1:1)));
-  const r1=[['วันที่','ชื่อ','ที่อยู่','เลข','ประเภท','ยอด','ส่งเงิน','หมายเหตุ']];
-  sorted.forEach(e=>{const s=by[e.slip_id];r1.push([thaiDateText(s.date),s.name,s.address,String(e.number),e.type,e.amount,s.send_money,s.note])});
-  const g={};
-  sorted.forEach(e=>{const s=by[e.slip_id];const d=g[s.date]=g[s.date]||{top:0,bot:0,nums:new Set(),slips:new Set()};
-    if(e.type==='บน')d.top=addMoney(d.top,e.amount);else d.bot=addMoney(d.bot,e.amount);d.nums.add(e.number);d.slips.add(e.slip_id)});
-  const r2=[['วันที่','รวมบน','รวมล่าง','รวมทั้งหมด','จำนวนเลข','จำนวนโพย']];
-  let tt=0,tb=0,tn=0,ts=0;
-  Object.keys(g).sort().forEach(k=>{const d=g[k];r2.push([thaiDateText(k),d.top,d.bot,addMoney(d.top,d.bot),d.nums.size,d.slips.size]);tt=addMoney(tt,d.top);tb=addMoney(tb,d.bot);tn+=d.nums.size;ts+=d.slips.size});
-  r2.push(['รวมทุกวัน',tt,tb,addMoney(tt,tb),tn,ts]);
-  const enc=new TextEncoder(),X='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
-  const files=[
-    ['[Content_Types].xml',X+'<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>'],
-    ['_rels/.rels',X+'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'],
-    ['xl/workbook.xml',X+'<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="รายการ" sheetId="1" r:id="rId1"/><sheet name="สรุป" sheetId="2" r:id="rId2"/></sheets></workbook>'],
-    ['xl/_rels/workbook.xml.rels',X+'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/></Relationships>'],
-    ['xl/worksheets/sheet1.xml',sheetXml(r1)],
-    ['xl/worksheets/sheet2.xml',sheetXml(r2)]
-  ];
-  return zipStore(files.map(f=>({name:f[0],data:enc.encode(f[1])})));
+  const hd=['วันที่','ชื่อ','ที่อยู่','เลข','ประเภท','ยอด','ส่งเงิน','หมายเหตุ'].map(v=>({v,s:14}));
+  const flat=[hd];
+  sorted.forEach(e=>{const s=by[e.slip_id];flat.push([thaiDateText(s.date),s.name,s.address,String(e.number),e.type,e.amount,s.send_money,s.note])});
+  sheets.push({name:used.has('รายการ')?'รายการทั้งหมด':'รายการ',xml:sheetXml(flat,{cols:[24,16,18,7,8,12,12,20],first:!sheets.length})});
+  const enc=new TextEncoder();
+  const n=sheets.length;
+  let ct=XH+'<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>';
+  let wb=XH+'<workbook xmlns="'+XM+'" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><bookViews><workbookView activeTab="0"/></bookViews><sheets>';
+  let rel=XH+'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">';
+  const files=[];
+  sheets.forEach((sh,i)=>{
+    ct+='<Override PartName="/xl/worksheets/sheet'+(i+1)+'.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>';
+    wb+='<sheet name="'+xesc(sh.name)+'" sheetId="'+(i+1)+'" r:id="rId'+(i+1)+'"/>';
+    rel+='<Relationship Id="rId'+(i+1)+'" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet'+(i+1)+'.xml"/>';
+    files.push(['xl/worksheets/sheet'+(i+1)+'.xml',sh.xml]);
+  });
+  ct+='</Types>';wb+='</sheets></workbook>';
+  rel+='<Relationship Id="rId'+(n+1)+'" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>';
+  const all=[['[Content_Types].xml',ct],['_rels/.rels',XH+'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'],['xl/workbook.xml',wb],['xl/_rels/workbook.xml.rels',rel],['xl/styles.xml',stylesXml()]].concat(files);
+  return zipStore(all.map(f=>({name:f[0],data:enc.encode(f[1])})));
 }
 // ==END CORE==
 
@@ -637,7 +730,6 @@ function toggleHeader(){
   const c=$('headerCard').classList.toggle('collapsed');
   $('btnHeaderToggle').textContent=c?'ขยาย':'ย่อ';$('btnHeaderToggle').setAttribute('aria-expanded',c?'false':'true');
 }
-function expandHeader(){$('headerCard').classList.remove('collapsed');$('btnHeaderToggle').textContent='ย่อ';$('btnHeaderToggle').setAttribute('aria-expanded','true')}
 
 /* ---------- ตารางกรอก (ทีละฝั่ง) ---------- */
 function badAmt(v){const t=String(v).trim();return t!==''&&validAmountStr(normalizeText(t))===null}
