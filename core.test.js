@@ -1,0 +1,31 @@
+const fs=require('fs'),assert=require('assert');
+const html=fs.readFileSync(__dirname+'/../www/index.html','utf8');
+const core=html.split('// ==CORE==')[1].split('// ==END CORE==')[0];
+eval(core+`
+let pass=0,fail=0;
+function T(n,f){try{f();pass++;console.log('OK  ',n)}catch(e){fail++;console.log('FAIL',n,e.message)}}
+const P=t=>parseText(t);
+T('03 stays text 03',()=>{const p=P('03 บน 100');assert.strictEqual(p.rows[0].number,'03')});
+T('00 and 09 keep zero',()=>assert.deepStrictEqual(P('00 บน 5\\n09 ล่าง 7').rows.map(r=>r.number),['00','09']));
+T('top/bottom not swapped',()=>assert.deepStrictEqual(P('07 บน 100 ล่าง 50').rows.map(r=>[r.type,r.amount]),[['บน',100],['ล่าง',50]]));
+T('abbreviations',()=>assert.deepStrictEqual(P('07บ100ล50').rows.map(r=>[r.type,r.amount]),[['บน',100],['ล่าง',50]]));
+T('thai digits and commas',()=>assert.strictEqual(P('๐๙ บน＝๑,๒๐๐.๕๐').rows[0].amount,1200.5));
+T('context header lines',()=>assert.deepStrictEqual(P('บน\\n12=50\\n13 x 20\\nล่าง:\\n12=30').rows.map(r=>[r.number,r.type,r.amount]),[['12','บน',50],['13','บน',20],['12','ล่าง',30]]));
+['07 100/50','35 60','07 บน 100 / ล่าง','07 บน -100','012 ตรง 80','5 บน 10','123 บน 10','07 บน','07 บน abc','12=50','07 บน 0','07 บน 100 สวัสดี','07 * 100','07 บน 1,2'].forEach(s=>T('hold '+s,()=>{const p=P(s);assert.strictEqual(p.rows.length,0);assert.strictEqual(p.held.length,1)}));
+T('nothing dropped silently',()=>{const p=P('07 บน 100\\nxx\\n08 ล่าง 20\\n35 60');assert.strictEqual(p.rows.length,2);assert.strictEqual(p.held.length,2)});
+T('duplicates add',()=>assert.deepStrictEqual(mergePlan([{number:'07',type:'บน',amount:100}],[{number:'07',type:'บน',amount:50},{number:'07',type:'ล่าง',amount:30}]),[{number:'07',type:'บน',old:100,add:50,next:150},{number:'07',type:'ล่าง',old:null,add:30,next:30}]));
+const base={date:'2026-11-27',name:'ก',address:'ข',send:'',note:''};
+const sl=[{slip_id:'a',date:'2026-11-27',name:'ก',address:'ข',send_money:'',note:'',status:'ยืนยันแล้ว'}];
+T('same header merges',()=>assert.strictEqual(findMergeSlip(sl,base).slip_id,'a'));
+T('other date not merged',()=>assert.strictEqual(findMergeSlip(sl,{...base,date:'2026-11-28'}),null));
+T('other name not merged',()=>assert.strictEqual(findMergeSlip(sl,{...base,name:'ค'}),null));
+T('other note not merged',()=>assert.strictEqual(findMergeSlip(sl,{...base,note:'x'}),null));
+T('cancelled not merged',()=>assert.strictEqual(findMergeSlip([{...sl[0],status:'ยกเลิก'}],base),null));
+T('thai buddhist date',()=>assert.strictEqual(thaiDateText('2026-11-27'),'27 พฤศจิกายน พ.ศ. 2569'));
+T('blank is not zero',()=>assert.strictEqual(fmtMoney(null),''));
+const en=[{entry_id:'e1',slip_id:'a',number:'03',type:'บน',amount:100},{entry_id:'e2',slip_id:'a',number:'03',type:'ล่าง',amount:20}];
+T('csv columns',()=>assert.strictEqual(buildCsv(sl,en).split('\\r\\n')[0].replace('\\ufeff',''),'เลข,ชื่อ,ที่อยู่,ประเภท,ยอด,วันที่,ส่งเงิน,หมายเหตุ'));
+T('backup roundtrip',()=>{const b=parseBackup(buildBackup(sl,en));assert(!b.error);const p=planImport([],[],b);assert.strictEqual(p.newEntries[0].number,'03');assert.strictEqual(planImport(sl,en,b).newSlips.length,0)});
+T('bad backup rejected',()=>assert(parseBackup('xx').error));
+console.log('passed',pass,'failed',fail);if(fail)process.exit(1);
+`);

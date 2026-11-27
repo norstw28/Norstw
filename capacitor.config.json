@@ -1,0 +1,8 @@
+{
+  "appId": "app.poy.twodigit",
+  "appName": "บันทึกโพย",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https"
+  }
+}
