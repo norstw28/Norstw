@@ -27,5 +27,16 @@ const en=[{entry_id:'e1',slip_id:'a',number:'03',type:'บน',amount:100},{entr
 T('csv columns',()=>assert.strictEqual(buildCsv(sl,en).split('\\r\\n')[0].replace('\\ufeff',''),'เลข,ชื่อ,ที่อยู่,ประเภท,ยอด,วันที่,ส่งเงิน,หมายเหตุ'));
 T('backup roundtrip',()=>{const b=parseBackup(buildBackup(sl,en));assert(!b.error);const p=planImport([],[],b);assert.strictEqual(p.newEntries[0].number,'03');assert.strictEqual(planImport(sl,en,b).newSlips.length,0)});
 T('bad backup rejected',()=>assert(parseBackup('xx').error));
+const NL=String.fromCharCode(10);
+const PS=(t,s)=>parseText(t,s);
+T('side top: number + amount',()=>assert.deepStrictEqual(PS(['10 10','11 40','12 50'].join(NL),'บน').rows.map(r=>[r.number,r.type,r.amount]),[['10','บน',10],['11','บน',40],['12','บน',50]]));
+T('side bottom: number + amount',()=>assert.deepStrictEqual(PS(['10 10','11 40','12 50'].join(NL),'ล่าง').rows.map(r=>[r.number,r.type,r.amount]),[['10','ล่าง',10],['11','ล่าง',40],['12','ล่าง',50]]));
+T('side accepts equals sign',()=>assert.deepStrictEqual(PS('12=50','บน').rows.map(r=>[r.type,r.amount]),[['บน',50]]));
+T('side keeps leading zero',()=>assert.strictEqual(PS('03 7','ล่าง').rows[0].number,'03'));
+T('side matching explicit type ok',()=>assert.strictEqual(PS('12 บน 50','บน').rows.length,1));
+[['12 ล่าง 50','บน'],['07 บน 100 ล่าง 50','บน'],['12 50 30','บน'],['ล่าง'+NL+'12 50','บน'],['5 50','บน'],['12 0','บน'],['12 50',null],['12=50',null]].forEach(x=>T('side hold '+x[0].split(NL).join(' / ')+' ['+x[1]+']',()=>{const p=PS(x[0],x[1]);assert.strictEqual(p.rows.length,0);assert.strictEqual(p.held.length,1)}));
+T('crc32 known value',()=>assert.strictEqual(crc32(new TextEncoder().encode('123456789')),0xcbf43926));
+T('xlsx is a zip with both sheets',()=>{const z=buildXlsx(sl,en);assert.strictEqual(z[0],0x50);assert.strictEqual(z[1],0x4b);const s=Buffer.from(z).toString('utf8');assert(s.includes('xl/worksheets/sheet2.xml'));assert(s.includes('xml:space="preserve">03<'));assert(s.includes('<v>100</v>'))});
+T('xlsx skips cancelled slips',()=>{const z=buildXlsx([{...sl[0],status:'ยกเลิก'}],en);assert(!Buffer.from(z).toString('utf8').includes('>03<'))});
 console.log('passed',pass,'failed',fail);if(fail)process.exit(1);
 `);
