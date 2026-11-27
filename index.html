@@ -671,7 +671,7 @@ $('btnExportXlsx').onclick=async()=>{
     if(review&&review.held.length&&!confirm('ยังมีบรรทัดรอตรวจที่ยังไม่ได้บันทึก ไฟล์นี้จะไม่รวมรายการเหล่านั้น ส่งออกต่อหรือไม่?'))return;
     const slips=await getAll('slips'),entries=await getAll('entries');
     const by={};slips.forEach(s=>by[s.slip_id]=s);
-    if(!entries.some(e=>by[e.slip_id]&&by[e.slip_id].status==='ยืนยันแล้ว')){toast('ยังไม่มีรายการที่ยืนยันบันทึกให���ส่งออก',true);return}
+    if(!entries.some(e=>by[e.slip_id]&&by[e.slip_id].status==='ยืนยันแล้ว')){toast('ยังไม่มีรายการที่ยืนยันบันทึกให้ส่งออก',true);return}
     const r=await saveFile('poy-all-'+stamp()+'.xlsx','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',buildXlsx(slips,entries));
     toast('✅ ส่งออก Excel แล้ว: '+r.where);
   }catch(e){toast('ส่งออกไม่สำเร็จ: '+e.message,true)}
